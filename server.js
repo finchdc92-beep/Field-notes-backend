@@ -3,8 +3,27 @@ const express = require('express');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// Explicit, permissive CORS config (rather than relying on cors()'s bare
+// defaults) plus an explicit OPTIONS handler for every route, so preflight
+// requests can never silently fail before reaching a real route.
+const corsOptions = {
+  origin: true, // reflect the request's Origin header — allow any site to call this API
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type']
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json({ limit: '15mb' })); // photos are base64, need headroom
+
+// Logs every incoming request so Render's logs show definitively whether a
+// request ever arrived here at all — useful for telling "never reached the
+// server" apart from "reached it and failed."
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
+  next();
+});
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 if (!API_KEY) {
@@ -98,6 +117,50 @@ ${text.slice(0, 2000)}
     res.json({ flagged: verdict.startsWith('BLOCK') });
   } catch (err) {
     console.error('Moderation error:', err);
+    res.json({ flagged: true, reason: 'moderation_error' });
+  }
+});
+
+// Image moderation for forum post photos. Uses Claude's vision to screen for
+// nudity/sexual content before an uploaded photo is ever stored or shown in
+// the feed. Fails closed (blocks) if the check itself can't complete.
+app.post('/moderate-image', async (req, res) => {
+  try {
+    const { image_base64, media_type } = req.body;
+    if (!image_base64) {
+      return res.status(400).json({ error: 'image_base64 is required' });
+    }
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 20,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: media_type || 'image/jpeg', data: image_base64 } },
+            {
+              type: 'text',
+              text: `You are a content moderation filter for a gardening app's community photo feed. Decide if this image should be BLOCKED. Block it if it contains nudity, sexual content, or sexually suggestive imagery of any kind. Do NOT block normal photos of plants, gardens, pests, yards, food, or people fully clothed in ordinary settings, even if unrelated to gardening. Respond with ONLY the single word "BLOCK" or "ALLOW" — nothing else.`
+            }
+          ]
+        }]
+      })
+    });
+    if (!response.ok) {
+      return res.json({ flagged: true, reason: 'moderation_unavailable' });
+    }
+    const data = await response.json();
+    const textBlock = (data.content || []).find(b => b.type === 'text');
+    const verdict = (textBlock && textBlock.text || '').trim().toUpperCase();
+    res.json({ flagged: verdict.startsWith('BLOCK') });
+  } catch (err) {
+    console.error('Image moderation error:', err);
     res.json({ flagged: true, reason: 'moderation_error' });
   }
 });
