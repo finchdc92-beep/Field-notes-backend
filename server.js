@@ -77,6 +77,45 @@ app.post('/identify', async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// Text-only lookup for the search feature — same idea as /identify, but
+// there's no photo. Used when someone searches for a plant/pest/disease/
+// rodent that isn't in the app's built-in library, so the AI can look it
+// up from its own knowledge instead.
+app.post('/lookup', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    if (!prompt) {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1600,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Anthropic API error:', response.status, errText);
+      return res.status(502).json({ error: 'Lookup service failed. Please try again.' });
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Server error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Content moderation for forum posts/comments. Sends the text to Claude for
 // classification and returns { flagged: true/false }. Blocks sexual content
 // (the app's own requirement), hate speech, threats, and targeted harassment,
@@ -102,9 +141,9 @@ app.post('/moderate', async (req, res) => {
           role: 'user',
           content: `You are a content moderation filter for a gardening app's community forum. Decide if the following user-submitted text should be BLOCKED.
 
-Block it if it contains: sexual content or sexual solicitation; hate speech or slurs targeting a protected group; genuine threats of violence; targeted harassment or bullying meant to actually hurt someone; spam or scam links; or content clearly unrelated/inappropriate for a gardening community.
+Block it if it contains: sexual content or sexual solicitation; hate speech or slurs targeting a protected group; genuine threats of violence; repeated or severe bullying clearly meant to actually hurt someone; spam or scam links; or content clearly unrelated/inappropriate for a gardening community.
 
-Do NOT block: normal gardening talk, even if blunt or informal; mild trash-talk, ribbing, or joking insults between users (words like "loser," "lame," "idiot," "dummy" used casually are fine and should be ALLOWED, not treated as harassment). The bar for blocking is genuine harm or hostility, not casual rudeness.
+Do NOT block: normal gardening talk, even if blunt or informal; mild trash-talk, ribbing, or joking insults between users. This is a casual community, not a zero-tolerance forum, so give the benefit of the doubt on short, single-word, or low-context messages. For example, ALLOW messages like "Loser!", "You're lame", "dummy", "idiot", "lol you're the worst" — these read as casual ribbing between people who know each other, not as harassment, even with no other context attached. Only BLOCK this kind of language if it's clearly severe, targets a protected characteristic, or is part of a genuinely threatening or sustained pattern.
 
 Respond with ONLY the single word "BLOCK" or "ALLOW" — nothing else.
 
