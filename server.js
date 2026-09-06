@@ -79,7 +79,9 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 
 // Content moderation for forum posts/comments. Sends the text to Claude for
 // classification and returns { flagged: true/false }. Blocks sexual content
-// (the app's own requirement) and, as a safety net, other clearly abusive content.
+// (the app's own requirement), hate speech, threats, and targeted harassment,
+// but explicitly allows casual trash-talk/ribbing between users — this is a
+// gardening community for real people, not a zero-tolerance forum.
 app.post('/moderate', async (req, res) => {
   try {
     const { text } = req.body;
@@ -98,7 +100,13 @@ app.post('/moderate', async (req, res) => {
         max_tokens: 20,
         messages: [{
           role: 'user',
-          content: `You are a content moderation filter for a gardening app's community forum. Decide if the following user-submitted text should be BLOCKED. Block it if it contains sexual content, sexual solicitation, or content clearly unrelated/inappropriate for a gardening community (harassment, hate speech, spam links). Do NOT block normal gardening talk, even if blunt or informal. Respond with ONLY the single word "BLOCK" or "ALLOW" — nothing else.
+          content: `You are a content moderation filter for a gardening app's community forum. Decide if the following user-submitted text should be BLOCKED.
+
+Block it if it contains: sexual content or sexual solicitation; hate speech or slurs targeting a protected group; genuine threats of violence; targeted harassment or bullying meant to actually hurt someone; spam or scam links; or content clearly unrelated/inappropriate for a gardening community.
+
+Do NOT block: normal gardening talk, even if blunt or informal; mild trash-talk, ribbing, or joking insults between users (words like "loser," "lame," "idiot," "dummy" used casually are fine and should be ALLOWED, not treated as harassment). The bar for blocking is genuine harm or hostility, not casual rudeness.
+
+Respond with ONLY the single word "BLOCK" or "ALLOW" — nothing else.
 
 Text to review:
 """
